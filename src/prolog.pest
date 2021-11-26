@@ -1,0 +1,24 @@
+number = @{
+    ASCII_DIGIT+
+}
+
+variable = @{ "_" | (ASCII_ALPHA_UPPER ~ ASCII_ALPHANUMERIC*)}
+
+atom = @{ ASCII_ALPHA_LOWER ~ (ASCII_ALPHANUMERIC | "_")* }
+
+term = {
+    structure | atom | number | variable
+}
+
+structure = {
+    ( atom ~ "(" ~ term ~ ("," ~ term)* ~ ")" )
+}
+
+rule = {
+    term ~ "."
+}
+
+prolog = { SOI ~ (rule)+ ~ EOI}
+
+WHITESPACE = _{ " " | "\t" | "\n" }
+COMMENT = _{ ("%" ~ (!"\n" ~ ANY)*) | ("/*" ~ (!"*/" ~ ANY)* ~ "*/") }
