@@ -1,152 +1,118 @@
-#[macro_use]
-extern crate pest_derive;
+use std::collections::HashSet;
 
-use pest::Parser;
-use pest::error::Error;
-use pest::iterators::Pair;
-
-#[derive(Parser)]
-#[grammar = "prolog.pest"]
-struct PrologParser;
-
-#[derive(Debug, Eq, PartialEq)]
-struct Ast<'a> {
-    rules: Vec<AstRule<'a>>
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct AstRule<'a> {
-    head: AstTerm<'a>
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum AstTerm<'a> {
-    Atom(&'a str),
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub enum Term {
     Number(i64),
-    Structure(&'a str, Vec<AstTerm<'a>>),
-    Var(&'a str)
+    Atom(String),
+    Str(String, Vec<Term>),
+    Var(String),
 }
 
-fn parse_prolog(file: &str) -> Result<Ast, Error<Rule>> {
-    let prolog_file = PrologParser::parse(Rule::prolog, file)?.next().unwrap();
-
-    fn parse_term(pair: Pair<Rule>) -> AstTerm {
-        let term_pair = pair.into_inner().next().unwrap();
-        match term_pair.as_rule() {
-            Rule::atom => {
-                AstTerm::Atom(term_pair.as_str())
-            },
-            Rule::number => {
-                AstTerm::Number(term_pair.as_str().parse().unwrap())
-            },
-            Rule::variable => {
-                AstTerm::Var(term_pair.as_str())
-            },
-            Rule::structure => {
-                let mut inner = term_pair.into_inner();
-                let functor = inner.next().unwrap().as_str();
-                let mut terms = Vec::new();
-                while let Some(term) = inner.next() {
-                    terms.push(parse_term(term));
-                }
-                AstTerm::Structure(functor, terms)
-            }
-            _ => {
-                unreachable!();
-            }
-        }
-    }
-
-    fn parse_rule(pair: Pair<Rule>) -> Option<AstRule> {
-        if pair.as_rule() == Rule::EOI {
-            return None;
-        }
-        Some(AstRule {
-            head: parse_term(pair.into_inner().next().unwrap())
-        })
-    }
-
-    let ast = Ast {
-        rules: prolog_file.into_inner().filter_map(parse_rule).collect()
-    };
-
-    Ok(ast)
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub struct Substitution {
+    name: String,
+    value: Term,
 }
 
+pub fn unify(left: Term, right: Term) -> Option<HashSet<Substitution>> {
+    match (left, right) {
+	(Term::Number(x), Term::Number(y)) => {
+	    if x == y {
+		Some(HashSet::new())
+	    } else {
+		None
+	    }
+	},
+	(Term::Atom(x), Term::Atom(y)) => {
+	    if x == y {
+		Some(HashSet::new())
+	    } else {
+		None
+	    }
+	}
+	(Term::Var(name), value) => {
+	    Some(HashSet::from([Substitution { name, value }]))
+	}
+	(value, Term::Var(name)) => {
+	    Some(HashSet::from([Substitution { name, value}]))
+	}
+	(Term::Str(left_name, left_terms), Term::Str(right_name, right_terms)) => {
+	    let left_terms_len = left_terms.len();
+	    if left_name == right_name && left_terms_len == right_terms.len() {
+		let unifications: HashSet<Substitution> = std::iter::zip(left_terms, right_terms)
+		    .filter_map(|(l,r)| unify(l, r))
+		    .flatten()
+		    .collect();
+		if unifications.len() == left_terms_len {
+		    Some(unifications)
+		} else {
+		    None
+		}
+	    } else {
+		None
+	    }
+	}
+	 _ => None
+    }	
+}
 
-#[cfg(test)]
-mod tests {
-    use crate::{parse_prolog, Ast, AstRule, AstTerm};
+#[test]
+fn unify_const() {
+    let left = Term::Number(56);
+    let right = Term::Number(56);
+    let result = unify(left, right);
+    assert_eq!(Some(HashSet::new()), result);
+}
 
-    #[test]
-    fn parse_rule_atom() {
-        let code = "a.";
-        let result = parse_prolog(code);
-        let ast = Ast {
-            rules: vec![AstRule {
-                head: AstTerm::Atom("a")
-            }]
-        };
-        assert_eq!(Ok(ast), result);
-    }
+#[test]
+fn unify_const_fail() {
+    let left = Term::Number(57);
+    let right = Term::Number(56);
+    let result = unify(left, right);
+    assert_eq!(None, result);
+}
 
-    #[test]
-    fn parse_rule_atom_large() {
-        let code = "amigos_de_prolog.";
-        let result = parse_prolog(code);
-        let ast = Ast {
-            rules: vec![AstRule {
-                head: AstTerm::Atom("amigos_de_prolog")
-            }]
-        };
-        assert_eq!(Ok(ast), result);
-    }
+#[test]
+fn unify_const_atom_number() {
+    let left = Term::Number(56);
+    let right = Term::Atom("esgueva".to_string());
+    let result = unify(left, right);
+    assert_eq!(None, result);
+}
 
-    #[test]
-    fn parse_rule_structure() {
-        let code = "f(a, b, c).";
-        let result = parse_prolog(code);
-        let ast = Ast {
-            rules: vec![AstRule {
-                head: AstTerm::Structure("f", vec![AstTerm::Atom("a"), AstTerm::Atom("b"), AstTerm::Atom("c")])
-            }]
-        };
-        assert_eq!(Ok(ast), result);
-    }
+#[test]
+fn unify_const_atom() {
+    let left = Term::Atom("esgueva".to_string());
+    let right = Term::Atom("esgueva".to_string());
+    let result = unify(left, right);
+    assert_eq!(Some(HashSet::new()), result);
+}
 
-    #[test]
-    fn parse_rule_structure_complex() {
-        let code = "f(a, g(b), c).";
-        let result = parse_prolog(code);
-        let ast = Ast {
-            rules: vec![AstRule {
-                head: AstTerm::Structure("f", vec![AstTerm::Atom("a"), AstTerm::Structure("g", vec![AstTerm::Atom("b")]), AstTerm::Atom("c")])
-            }]
-        };
-        assert_eq!(Ok(ast), result);
-    }
+#[test]
+fn unify_const_atom_fail() {
+    let left = Term::Atom("esgueva".to_string());
+    let right = Term::Atom("duero".to_string());
+    let result = unify(left, right);
+    assert_eq!(None, result);
+}
 
-    #[test]
-    fn parse_number() {
-        let code = "age(42).";
-        let result = parse_prolog(code);
-        let ast = Ast {
-            rules: vec![AstRule {
-                head: AstTerm::Structure("age", vec![AstTerm::Number(42)])
-            }]
-        };
-        assert_eq!(Ok(ast), result);
-    }
+#[test]
+fn unify_var() {
+    let left = Term::Var("X".to_string());
+    let right = Term::Atom("esgueva".to_string());
+    let result = unify(left, right.clone());
+    assert_eq!(Some(HashSet::from([Substitution { name: "X".to_string(), value: right }])), result);
+}
 
-    #[test]
-    fn parse_variable() {
-        let code = "name(Name).";
-        let result = parse_prolog(code);
-        let ast = Ast {
-            rules: vec![AstRule {
-                head: AstTerm::Structure("name", vec![AstTerm::Var("Name")])
-            }]
-        };
-        assert_eq!(Ok(ast), result);
-    }
+#[test]
+fn unify_str() {
+    let left = Term::Str("f".to_string(), vec![Term::Var("X".to_string()), Term::Number(23), Term::Var("Z".to_string())]);
+    let right = Term::Str("f".to_string(), vec![Term::Var("Z".to_string()), Term::Var("Y".to_string()), Term::Var("Y".to_string())]);
+    let result = unify(left, right);
+    let substitutions = HashSet::from([
+	Substitution { name: "X".to_string(), value: Term::Var("Z".to_string()) },
+	Substitution { name: "Z".to_string(), value: Term::Var("Y".to_string()) },
+	Substitution { name: "Y".to_string(), value: Term::Number(23) }
+    ]);
+    assert_eq!(Some(substitutions), result);
 }
