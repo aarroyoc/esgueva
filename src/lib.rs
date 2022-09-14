@@ -41,18 +41,18 @@ pub fn unify(left: Term, right: Term) -> Option<HashMap<String, Term>> {
 		    for unification in unifications {
 			for (var, term) in &unification {
 			    if final_unification.contains_key(var) {
-				if *term == final_unification[var] {
+				let value = final_unification[var].clone();
+				if *term == value {
 				    continue;
-				} else {
+				} else if let Term::Var(v) = value {
+				    final_unification.remove(var).unwrap();
+				    final_unification.insert(var.clone(), term.clone());
+				    final_unification.insert(v.clone(), Term::Var(var.clone()));
+			        } else {
 				    return None;
 				}
 			    } else {
 				final_unification.insert(var.clone(), term.clone());
-				for val in final_unification.values_mut() {
-				    if *val == Term::Var(var.clone()) {
-					*val = term.clone();
-				    }
-				}
 			    }
 			}
 		    }
@@ -122,7 +122,7 @@ fn unify_str() {
     let right = Term::Str("f".to_string(), vec![Term::Var("Z".to_string()), Term::Var("Y".to_string()), Term::Var("Y".to_string())]);
     let result = unify(left, right);
     let substitutions = HashMap::from([
-	("X".to_string(), Term::Var("Y".to_string())),
+	("X".to_string(), Term::Var("Z".to_string())),
 	("Z".to_string(), Term::Var("Y".to_string())),
 	("Y".to_string(), Term::Number(23))
     ]);
@@ -147,3 +147,16 @@ fn unify_str_3() {
     let result = unify(left, right);
     assert_eq!(None, result);    
 }
+
+#[test]
+fn unify_str_4() {
+    let left = Term::Str("f".to_string(), vec![Term::Var("X".to_string()), Term::Var("X".to_string())]);
+    let right = Term::Str("f".to_string(), vec![Term::Var("Y".to_string()), Term::Number(4)]);
+    let result = unify(left, right);
+    let substitutions = HashMap::from([
+	("X".to_string(), Term::Number(4)),
+	("Y".to_string(), Term::Var("X".to_string())),
+    ]);
+    assert_eq!(Some(substitutions), result);    
+}
+
