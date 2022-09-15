@@ -160,3 +160,15 @@ fn unify_str_4() {
     assert_eq!(Some(substitutions), result);    
 }
 
+#[test]
+fn unify_str_5() {
+    let left = Term::Str("f".to_string(), vec![Term::Var("X".to_string()), Term::Var("Y".to_string()), Term::Var("Y".to_string())]);
+    let right = Term::Str("f".to_string(), vec![Term::Var("Y".to_string()), Term::Var("X".to_string()), Term::Var("Y".to_string())]);
+    let result = unify(left, right);
+    let substitutions = HashMap::from([
+	("X".to_string(), Term::Var("Y".to_string())),
+	("Y".to_string(), Term::Var("Y".to_string())),
+    ]);
+    assert_eq!(Some(substitutions), result);    
+}
+
