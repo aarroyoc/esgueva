@@ -1,196 +1,177 @@
 use std::collections::HashMap;
+use std::iter::zip;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Term {
-    Number(i64),
+#[derive(Debug, Clone)]
+enum Term {
     Atom(String),
-    Str(String, Vec<Term>),
     Var(String),
+    Str(String, Vec<Term>),
 }
 
-pub fn unify(left: Term, right: Term) -> Option<HashMap<String, Term>> {
-    match (left, right) {
-	(Term::Number(x), Term::Number(y)) => {
-	    if x == y {
-		Some(HashMap::new())
-	    } else {
-		None
-	    }
-	},
-	(Term::Atom(x), Term::Atom(y)) => {
-	    if x == y {
-		Some(HashMap::new())
-	    } else {
-		None
-	    }
+impl PartialEq for Term {
+    fn eq(&self, other: &Self) -> bool {
+	match (self, other) {
+	    (Term::Atom(x), Term::Atom(y)) => x == y,
+	    (Term::Var(x), Term::Var(y)) => x == y,
+	    _ => false
 	}
-	(Term::Var(name), value) => {
-	    Some(HashMap::from([(name, value)]))
+    }
+}
+
+type Bindings = Option<HashMap<String, Term>>;
+
+fn unify(x: Term, y: Term, bindings: Bindings, occurs_check: bool) -> Bindings {
+    if x == y {
+	bindings
+    } else if let Term::Var(var) = x {
+	unify_variable(var, y, bindings, occurs_check)
+    } else if let Term::Var(var) = y {
+	unify_variable(var, x, bindings, occurs_check)
+    } else if let (Term::Str(f_x, args_x), Term::Str(f_y, args_y)) = (x, y) {
+	if f_x == f_y && args_x.len() == args_y.len() {
+	    zip(args_x, args_y).fold(bindings, |acc_bindings, (t_x, t_y)| {
+		unify(t_x, t_y, acc_bindings, occurs_check)
+	    })
+	} else {
+	    None
 	}
-	(value, Term::Var(name)) => {
-	    Some(HashMap::from([(name, value)]))
-	}
-	(Term::Str(left_name, left_terms), Term::Str(right_name, right_terms)) => {
-	    let left_terms_len = left_terms.len();
-	    if left_name == right_name && left_terms_len == right_terms.len() {
-		let unifications: Vec<HashMap<String, Term>> = std::iter::zip(left_terms, right_terms)
-		    .filter_map(|(l,r)| unify(l, r))
-		    .collect();
-		if unifications.len() == left_terms_len {
-		    let mut final_unification: HashMap<String, Term> = HashMap::new();
-		    for unification in unifications {
-			for (var, term) in &unification {
-			    if final_unification.contains_key(var) {
-				let value = final_unification[var].clone();
-				if *term == value {
-				    continue;
-				} else if let Term::Var(v) = value {
-				    final_unification.remove(var).unwrap();
-				    final_unification.insert(var.clone(), term.clone());
-				    final_unification.insert(v.clone(), Term::Var(var.clone()));
-			        } else {
-				    return None;
-				}
-			    } else {
-				final_unification.insert(var.clone(), term.clone());
-			    }
-			}
-		    }
-		    Some(final_unification)
-		} else {
-		    None
+    } else {
+	None
+    }
+}
+
+#[inline]
+fn unify_variable(var: String, y: Term, bindings: Bindings, occurs_check_flag: bool) -> Bindings {
+    let mut bindings = bindings?;
+    match bindings.get(&var) {
+	Some(value) => unify(value.clone(), Term::Var(var), Some(bindings), occurs_check_flag),
+	None => {
+	    if let Term::Var(ref y_var) = y {
+		if let Some(y_val) = bindings.get(y_var) {
+		    return unify(Term::Var(var), y_val.clone(), Some(bindings), occurs_check_flag)
 		}
-	    } else {
-		None
 	    }
+
+	    occurs_check(var.clone(), y.clone(), Some(bindings), occurs_check_flag).and_then(|mut bindings| {
+		bindings.insert(var, y.clone());
+		Some(bindings)
+	    })
+	   
 	}
-	 _ => None
-    }	
+    }
+}
+
+#[inline]
+fn occurs_check(var: String, y: Term, bindings: Bindings, occurs_check_flag: bool) -> Bindings {
+    if !occurs_check_flag {
+	bindings
+    } else if Term::Var(var.clone()) == y {
+	None
+    } else if let Term::Var(y_var) = y {
+	match bindings.clone()?.get(&y_var) {
+	    Some(y_val) => {
+		return occurs_check(var, y_val.clone(), bindings, occurs_check_flag);
+	    }
+	    None => bindings
+	}
+    } else if let Term::Str(_, args) = y {
+	args.iter().fold(bindings, |acc_bindings, t_y| {
+	    occurs_check(var.clone(), t_y.clone(), acc_bindings, occurs_check_flag)
+	})
+    } else {
+	bindings
+    }
 }
 
 #[test]
-fn unify_const() {
-    let left = Term::Number(56);
-    let right = Term::Number(56);
-    let result = unify(left, right);
-    assert_eq!(Some(HashMap::new()), result);
+fn unify_atoms() {
+    let x = Term::Atom("duero".into());
+    let y = Term::Atom("duero".into());
+    let bindings = unify(x, y, Some(HashMap::new()), false);
+    let expected = Some(HashMap::new());
+    assert_eq!(expected, bindings);
 }
 
 #[test]
-fn unify_const_fail() {
-    let left = Term::Number(57);
-    let right = Term::Number(56);
-    let result = unify(left, right);
-    assert_eq!(None, result);
+fn unify_atoms_fail() {
+    let x = Term::Atom("duero".into());
+    let y = Term::Atom("pisuerga".into());
+    let bindings = unify(x, y, Some(HashMap::new()), false);
+    let expected = None;
+    assert_eq!(expected, bindings);
 }
 
 #[test]
-fn unify_const_atom_number() {
-    let left = Term::Number(56);
-    let right = Term::Atom("esgueva".to_string());
-    let result = unify(left, right);
-    assert_eq!(None, result);
+fn unify_atom_var() {
+    let x = Term::Var("River".into());
+    let y = Term::Atom("duero".into());
+    let bindings = unify(x, y, Some(HashMap::new()), false);
+    let mut expected = HashMap::new();
+    expected.insert("River".into(), Term::Atom("duero".into()));
+    assert_eq!(Some(expected), bindings);
 }
 
 #[test]
-fn unify_const_atom() {
-    let left = Term::Atom("esgueva".to_string());
-    let right = Term::Atom("esgueva".to_string());
-    let result = unify(left, right);
-    assert_eq!(Some(HashMap::new()), result);
-}
-
-#[test]
-fn unify_const_atom_fail() {
-    let left = Term::Atom("esgueva".to_string());
-    let right = Term::Atom("duero".to_string());
-    let result = unify(left, right);
-    assert_eq!(None, result);
+fn unify_atom_var_2() {
+    let y = Term::Var("River".into());
+    let x = Term::Atom("duero".into());
+    let bindings = unify(x, y, Some(HashMap::new()), false);
+    let mut expected = HashMap::new();
+    expected.insert("River".into(), Term::Atom("duero".into()));
+    assert_eq!(Some(expected), bindings);
 }
 
 #[test]
 fn unify_var() {
-    let left = Term::Var("X".to_string());
-    let right = Term::Atom("esgueva".to_string());
-    let result = unify(left, right.clone());
-    assert_eq!(Some(HashMap::from([("X".to_string(),right )])), result);
+    let x = Term::Var("X".into());
+    let y = Term::Var("Y".into());
+    let bindings = unify(x, y, Some(HashMap::new()), false);
+    let mut expected = HashMap::new();
+    expected.insert("X".into(), Term::Var("Y".into()));
+    assert_eq!(Some(expected), bindings);
 }
 
 #[test]
 fn unify_str() {
-    let left = Term::Str("f".to_string(), vec![Term::Var("X".to_string()), Term::Number(23), Term::Var("Z".to_string())]);
-    let right = Term::Str("f".to_string(), vec![Term::Var("Z".to_string()), Term::Var("Y".to_string()), Term::Var("Y".to_string())]);
-    let result = unify(left, right);
-    let substitutions = HashMap::from([
-	("X".to_string(), Term::Var("Z".to_string())),
-	("Z".to_string(), Term::Var("Y".to_string())),
-	("Y".to_string(), Term::Number(23))
-    ]);
-    assert_eq!(Some(substitutions), result);
+    let x = Term::Str("f".into(), vec![Term::Var("X".into()), Term::Atom("b".into())]);
+    let y = Term::Str("f".into(), vec![Term::Atom("a".into()), Term::Var("Y".into())]);
+    let bindings = unify(x, y, Some(HashMap::new()), false);
+    let mut expected = HashMap::new();
+    expected.insert("X".into(), Term::Atom("a".into()));
+    expected.insert("Y".into(), Term::Atom("b".into()));    
+    assert_eq!(Some(expected), bindings);
 }
 
 #[test]
-fn unify_str_2() {
-    let left = Term::Str("f".to_string(), vec![Term::Var("X".to_string()), Term::Number(4)]);
-    let right = Term::Str("f".to_string(), vec![Term::Number(4), Term::Var("X".to_string())]);
-    let result = unify(left, right);
-    let substitutions = HashMap::from([
-	("X".to_string(), Term::Number(4))
-    ]);
-    assert_eq!(Some(substitutions), result);    
+fn unify_str_fail() {
+    let x = Term::Str("f".into(), vec![Term::Var("X".into()), Term::Atom("b".into())]);
+    let y = Term::Str("g".into(), vec![Term::Atom("a".into()), Term::Var("Y".into())]);
+    let bindings = unify(x, y, Some(HashMap::new()), false);
+    assert_eq!(None, bindings);
 }
 
 #[test]
-fn unify_str_3() {
-    let left = Term::Str("f".to_string(), vec![Term::Var("X".to_string()), Term::Number(4)]);
-    let right = Term::Str("f".to_string(), vec![Term::Number(5), Term::Var("X".to_string())]);
-    let result = unify(left, right);
-    assert_eq!(None, result);    
+fn unify_str_fail_2() {
+    let x = Term::Str("f".into(), vec![Term::Var("X".into()), Term::Atom("b".into())]);
+    let y = Term::Str("f".into(), vec![Term::Atom("a".into())]);
+    let bindings = unify(x, y, Some(HashMap::new()), false);
+    assert_eq!(None, bindings);
 }
 
 #[test]
-fn unify_str_4() {
-    let left = Term::Str("f".to_string(), vec![Term::Var("X".to_string()), Term::Var("X".to_string())]);
-    let right = Term::Str("f".to_string(), vec![Term::Var("Y".to_string()), Term::Number(4)]);
-    let result = unify(left, right);
-    let substitutions = HashMap::from([
-	("X".to_string(), Term::Number(4)),
-	("Y".to_string(), Term::Var("X".to_string())),
-    ]);
-    assert_eq!(Some(substitutions), result);    
+fn unify_fxy_norvig_bug() {
+    let x = Term::Str("f".into(), vec![Term::Var("X".into()), Term::Var("Y".into())]);
+    let y = Term::Str("f".into(), vec![Term::Var("Y".into()), Term::Var("X".into())]);
+    let bindings = unify(x, y, Some(HashMap::new()), false);
+    let mut expected = HashMap::new();
+    expected.insert("X".into(), Term::Var("Y".into()));
+    assert_eq!(Some(expected), bindings);
 }
 
 #[test]
-fn unify_str_5() {
-    let left = Term::Str("f".to_string(), vec![Term::Var("X".to_string()), Term::Var("Y".to_string()), Term::Var("Y".to_string())]);
-    let right = Term::Str("f".to_string(), vec![Term::Var("Y".to_string()), Term::Var("X".to_string()), Term::Var("Y".to_string())]);
-    let result = unify(left, right);
-    let substitutions = HashMap::from([
-	("X".to_string(), Term::Var("Y".to_string())),
-	("Y".to_string(), Term::Var("Y".to_string())),
-    ]);
-    assert_eq!(Some(substitutions), result);    
-}
-
-#[test]
-fn unify_str_6() {
-    let left = Term::Str("f".to_string(), vec![Term::Var("X".to_string()), Term::Var("Y".to_string()), Term::Var("Y".to_string())]);
-    let right = Term::Str("f".to_string(), vec![Term::Var("Y".to_string()), Term::Var("X".to_string()), Term::Var("X".to_string())]);
-    let result = unify(left, right);
-    let substitutions = HashMap::from([
-	("X".to_string(), Term::Var("Y".to_string())),
-	("Y".to_string(), Term::Var("X".to_string())),
-    ]);
-    assert_eq!(Some(substitutions), result);    
-}
-
-#[test]
-fn unify_str_7() {
-    let left = Term::Str("f".to_string(), vec![Term::Str("g".to_string(), vec![Term::Number(4)])]);
-    let right = Term::Str("f".to_string(), vec![Term::Str("g".to_string(), vec![Term::Var("X".to_string())])]);
-    let result = unify(left, right);
-    let substitutions = HashMap::from([
-	("X".to_string(), Term::Number(4)),
-    ]);
-    assert_eq!(Some(substitutions), result);    
+fn unify_cyclic() {
+    let x = Term::Var("X".into());
+    let y = Term::Str("f".into(), vec![Term::Var("X".into())]);
+    let bindings = unify(x, y, Some(HashMap::new()), true);
+    assert_eq!(None, bindings);
 }
