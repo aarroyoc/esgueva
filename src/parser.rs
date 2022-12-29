@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use nom::{
     IResult,
     Err,
@@ -5,6 +6,7 @@ use nom::{
     error::ErrorKind,
     branch::alt,
     bytes::complete::tag,
+    bytes::complete::is_not,
     character::complete::anychar,
     character::complete::char,
     character::complete::alphanumeric0,
@@ -13,6 +15,7 @@ use nom::{
     multi::many1,
     multi::separated_list0,
     multi::separated_list1,
+    sequence::delimited,
 };
 
 use crate::term::Term;
@@ -63,6 +66,10 @@ fn spaced_comma(input: &str) -> IResult<&str, ()> {
 }
 
 fn term_str(input: &str) -> IResult<&str, Term> {
+    alt((term_str_default, term_str_quoted, term_str_list, term_str_head_tail))(input)
+}
+
+fn term_str_default(input: &str) -> IResult<&str, Term> {
     let (input, first) = anychar(input)?;
     if !first.is_ascii_lowercase() {
 	return Err(Err::Error(Error::new(input, ErrorKind::Char)));
@@ -78,6 +85,45 @@ fn term_str(input: &str) -> IResult<&str, Term> {
     Ok((input, Term::Str(format!("{}{}", first, atom), args)))
 }
 
+fn term_str_quoted(input: &str) -> IResult<&str, Term> {
+    let (input, atom) = delimited(char('\''), is_not("'"), char('\''))(input)?;
+    let (input, _) = char('(')(input)?;
+
+    let (input, args) = separated_list1(spaced_comma, alt((term_str, term_var, term_atom)))(input)?;
+    
+    let (input, _) = char(')')(input)?;
+
+    Ok((input, Term::Str(atom.to_string(), args)))
+}
+
+fn term_str_list(input: &str) -> IResult<&str, Term> {
+    let (input, _) = char('[')(input)?;
+    let (input, elements) = separated_list1(spaced_comma, alt((term_str, term_var, term_atom)))(input)?;
+    let (input, _) = char(']')(input)?;
+
+    let list = build_list(elements.into());
+
+    Ok((input, list))
+}
+
+fn build_list(mut elements: VecDeque<Term>) -> Term {
+    if let Some(element) = elements.pop_front() {
+	Term::Str(".".into(), vec![element, build_list(elements)])
+    } else {
+	Term::Atom("[]".into())
+    }
+}
+
+fn term_str_head_tail(input: &str) -> IResult<&str, Term> {
+    let (input, _) = char('[')(input)?;
+    let (input, head) = alt((term_str, term_var, term_atom))(input)?;
+    let (input, _) = char('|')(input)?;
+    let (input, tail) = alt((term_str, term_var, term_atom))(input)?;
+    let (input, _) = char(']')(input)?;
+
+    Ok((input, Term::Str(".".into(), vec![head, tail])))
+}
+
 fn term_var(input: &str) -> IResult<&str, Term> {
     let (input, first) = anychar(input)?;
     if !first.is_ascii_uppercase() {
@@ -89,6 +135,10 @@ fn term_var(input: &str) -> IResult<&str, Term> {
 }
 
 fn term_atom(input: &str) -> IResult<&str, Term> {
+    alt((term_atom_default, term_atom_quoted, term_atom_nil))(input)
+}
+
+fn term_atom_default(input: &str) -> IResult<&str, Term> {
     let (input, first) = anychar(input)?;
     if !first.is_ascii_lowercase() {
 	return Err(Err::Error(Error::new(input, ErrorKind::Char)));
@@ -96,6 +146,18 @@ fn term_atom(input: &str) -> IResult<&str, Term> {
     let (input, atom) = alphanumeric0(input)?;
 
     Ok((input, Term::Atom(format!("{}{}", first, atom))))
+}
+
+fn term_atom_quoted(input: &str) -> IResult<&str, Term> {
+    let (input, atom) = delimited(char('\''), is_not("'"), char('\''))(input)?;
+
+    Ok((input, Term::Atom(atom.to_string())))
+}
+
+fn term_atom_nil(input: &str) -> IResult<&str, Term> {
+    let (input, _) = tag("[]")(input)?;
+
+    Ok((input, Term::Atom("[]".into())))
 }
 
 #[test]
@@ -115,6 +177,50 @@ fn parse_fact() {
     let result = clause(input);
     let expected = Clause {
 	head: Term::Str("f".into(), vec![Term::Atom("adrian".into()), Term::Atom("valladolid".into())]),
+	body: vec![],
+    };
+    assert_eq!(result, Ok(("", expected)));
+}
+
+#[test]
+fn parse_fact_2() {
+    let input = "list('.'(a,nil)).";
+    let result = clause(input);
+    let expected = Clause {
+	head: Term::Str("list".into(), vec![Term::Str(".".into(), vec![Term::Atom("a".into()), Term::Atom("nil".into())])]),
+	body: vec![],
+    };
+    assert_eq!(result, Ok(("", expected)));
+}
+
+#[test]
+fn parse_fact_3() {
+    let input = "list([a,[b,c]]).";
+    let result = clause(input);
+    let expected = Clause {
+	head: Term::Str("list".into(), vec![
+	    Term::Str(".".into(), vec![
+		Term::Atom("a".into()), Term::Str(".".into(), vec![
+		    Term::Str(".".into(), vec![
+			Term::Atom("b".into()),
+			Term::Str(".".into(), vec![
+			    Term::Atom("c".into()),
+			    Term::Atom("[]".into())
+			])
+		    ]),
+		    Term::Atom("[]".into())
+		])])]),
+	body: vec![],
+    };
+    assert_eq!(result, Ok(("", expected)));
+}
+
+#[test]
+fn parse_fact_4() {
+    let input = "list([X|Xs]).";
+    let result = clause(input);
+    let expected = Clause {
+	head: Term::Str("list".into(), vec![Term::Str(".".into(), vec![Term::Var("X".into()), Term::Var("Xs".into())])]),
 	body: vec![],
     };
     assert_eq!(result, Ok(("", expected)));
