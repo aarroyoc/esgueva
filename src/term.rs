@@ -12,6 +12,7 @@ impl PartialEq for Term {
 	match (self, other) {
 	    (Term::Atom(x), Term::Atom(y)) => x == y,
 	    (Term::Var(x), Term::Var(y)) => x == y,
+	    (Term::Str(f_x, args_x), Term::Str(f_y, args_y)) => f_x == f_y && args_x == args_y,
 	    _ => false
 	}
     }

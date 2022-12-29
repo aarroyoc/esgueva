@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::term::Term;
 
+#[derive(PartialEq, Debug)]
 pub struct Clause {
     pub head: Term,
     pub body: Vec<Term>,
@@ -9,7 +10,7 @@ pub struct Clause {
 
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct Predicate {
-    name: String,
+    pub name: String,
     arity: usize,
 }
 impl Predicate {

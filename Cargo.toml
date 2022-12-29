@@ -8,3 +8,6 @@ edition = "2021"
 [dependencies.uuid]
 version = "1.2.2"
 features = ["v1", "std", "rng"]
+
+[dependencies.nom]
+version = "7"
