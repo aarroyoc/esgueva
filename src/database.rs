@@ -45,7 +45,6 @@ impl Database {
     }
 
     pub fn add_clause(&mut self, clause: Clause) {
-	let head = clause.head.clone();
 	if let Some(predicate_key) = Predicate::from_clause(&clause) {
             {
 
